@@ -68,8 +68,9 @@ class DocumentRetriever:
                 query,
                 k=self.fetch_k,
             )
+            retrieved_count = len(results)
 
-            logger.info(f"[Retriever] Raw results: {len(results)}")
+            logger.info(f"[Retriever] Raw results: {retrieved_count}")
 
             # -------------------------
             # Step 2: Deduplication
@@ -87,16 +88,27 @@ class DocumentRetriever:
                     doc.metadata["score"] = float(score)
                     docs.append(doc)
 
-            logger.info(f"[Retriever] After dedup: {len(docs)}")
+            deduplicated_count = len(docs)
+
+            logger.info(f"[Retriever] After dedup: {deduplicated_count}")
 
             # -------------------------
             # Step 3: Reranking
             # -------------------------
+            rerank_input_count = 0
+            rerank_output_count = 0
+
             if self.reranker and docs:
+                rerank_input_count = len(docs)
                 docs = self.reranker.rerank(query, docs)
-                logger.info("[Retriever] Reranking applied")
+                rerank_output_count = len(docs)
+                logger.info(
+                    "[Retriever] Reranking applied "
+                    f"(input={rerank_input_count}, output={rerank_output_count})"
+                )
             else:
                 docs = docs[: self.top_k]
+                logger.info("[Retriever] Reranking skipped")
 
             # -------------------------
             # Step 4: Final Trim
@@ -104,6 +116,15 @@ class DocumentRetriever:
             final_docs = docs[: self.top_k]
 
             logger.info(f"[Retriever] Final returned: {len(final_docs)}")
+            logger.info(
+                "[Retriever][Metrics] "
+                f"query={query!r}, "
+                f"retrieved={retrieved_count}, "
+                f"deduplicated={deduplicated_count}, "
+                f"rerank_input={rerank_input_count}, "
+                f"rerank_output={rerank_output_count}, "
+                f"returned={len(final_docs)}"
+            )
 
             return final_docs
 

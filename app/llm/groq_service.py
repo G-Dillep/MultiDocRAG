@@ -45,6 +45,14 @@ class RAGResponse(TypedDict):
     model: ModelMetadata
 
 
+class TokenUsage(TypedDict):
+    """Token usage metrics extracted from model responses."""
+
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+
+
 class GroqLLMService:
     """Generate structured answers using a Groq-hosted chat model."""
 
@@ -87,10 +95,21 @@ class GroqLLMService:
             raise ValueError("Query must not be empty")
 
         prompt = self._build_prompt(query, documents)
+        query_text = query.strip()
 
         logger.info("[LLMService] Invoking Groq model")
         response = self._client.invoke(prompt)
+        token_usage = self._extract_token_usage(response)
         raw_output = self._extract_content(response)
+
+        logger.info(
+            "[LLMService][Metrics] "
+            f"query={query_text!r}, "
+            f"input_tokens={token_usage['input_tokens']}, "
+            f"output_tokens={token_usage['output_tokens']}, "
+            f"total_tokens={token_usage['total_tokens']}, "
+            f"retrieved_docs={len(documents)}"
+        )
 
         payload = self._parse_response_json(raw_output)
         validated = self._validate_response(payload)
@@ -152,6 +171,59 @@ class GroqLLMService:
                 context_text,
             ],
         )
+
+    def _extract_token_usage(self, response: Any) -> TokenUsage:
+        usage_metadata = getattr(response, "usage_metadata", None)
+        if isinstance(usage_metadata, dict):
+            input_tokens = self._first_available_int(
+                usage_metadata,
+                ["input_tokens", "prompt_tokens"],
+            )
+            output_tokens = self._first_available_int(
+                usage_metadata,
+                ["output_tokens", "completion_tokens"],
+            )
+            total_tokens = self._first_available_int(
+                usage_metadata,
+                ["total_tokens"],
+            )
+
+            if (
+                input_tokens is not None
+                or output_tokens is not None
+                or total_tokens is not None
+            ):
+                return {
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": total_tokens,
+                }
+
+        response_metadata = getattr(response, "response_metadata", None)
+        if isinstance(response_metadata, dict):
+            token_usage = response_metadata.get("token_usage")
+
+            if isinstance(token_usage, dict):
+                return {
+                    "input_tokens": self._first_available_int(
+                        token_usage,
+                        ["input_tokens", "prompt_tokens"],
+                    ),
+                    "output_tokens": self._first_available_int(
+                        token_usage,
+                        ["output_tokens", "completion_tokens"],
+                    ),
+                    "total_tokens": self._first_available_int(
+                        token_usage,
+                        ["total_tokens"],
+                    ),
+                }
+
+        return {
+            "input_tokens": None,
+            "output_tokens": None,
+            "total_tokens": None,
+        }
 
     @staticmethod
     def _extract_content(response: Any) -> str:
@@ -225,6 +297,18 @@ class GroqLLMService:
 
         if isinstance(value, (int, float)):
             return float(value)
+
+        return None
+
+    @staticmethod
+    def _first_available_int(
+        payload: dict[str, Any],
+        keys: list[str],
+    ) -> int | None:
+        for key in keys:
+            value = GroqLLMService._to_optional_int(payload.get(key))
+            if value is not None:
+                return value
 
         return None
 

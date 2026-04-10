@@ -24,33 +24,23 @@ def main() -> None:
         settings.validate_for_langgraph()
         logger.info("[Main] Pipeline started")
 
-        # -------------------------
         # Ingestion
-        # -------------------------
         router = DocumentLoaderRouter()
         docs = router.load_documents(settings.data_path)
 
-        # -------------------------
         # Normalization
-        # -------------------------
         normalizer = DocumentNormalizer()
         docs = normalizer.normalize(docs)
 
-        # -------------------------
         # Chunking
-        # -------------------------
         chunker = DocumentChunker()
         chunks = chunker.chunk(docs)
-
-        # -------------------------
         # Embeddings + DB
-        # -------------------------
+
         embedding_model = EmbeddingModelFactory().get_model()
         db = create_vectorstore(chunks, embedding_model)
 
-        # -------------------------
         # LangGraph Retrieval + Generation
-        # -------------------------
         pipeline = LangGraphRAGPipeline()
         response = pipeline.invoke(db=db, query=settings.default_query)
 

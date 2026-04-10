@@ -1,0 +1,61 @@
+[project]
+name = "rag-pipeline"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "bandit>=1.9.4",
+    "chromadb>=1.5.7",
+    "langchain>=1.2.15",
+    "langchain-chroma>=0.2.6",
+    "langchain-community>=0.4.1",
+    "langchain-groq>=1.0.0",
+    "langchain-huggingface>=1.2.1",
+    "langchain-pymupdf4llm>=0.5.0",
+    "langchain-text-splitters>=1.1.1",
+    "langgraph>=1.0.0",
+    "loguru>=0.7.3",
+    "marker-pdf>=1.10.2",
+    "msoffcrypto-tool>=6.0.0",
+    "mypy>=1.20.0",
+    "openpyxl>=3.1.5",
+    "pandas>=2.3.3",
+    "pre-commit>=4.5.1",
+    "python-dotenv>=1.2.1",
+    "python-docx>=1.2.0",
+    "ruff>=0.15.10",
+    "sentence-transformers>=5.3.0",
+    "tqdm>=4.67.3",
+    "unstructured>=0.18.32",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.15.0",
+    "ruff>=0.12.11",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "D", "UP"]
+ignore = []
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+check_untyped_defs = true
+strict_optional = true
+show_error_codes = true
+pretty = true
+ignore_missing_imports = true

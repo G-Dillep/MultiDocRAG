@@ -1,0 +1,71 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: .venv/Scripts/python.exe
+        args: ["-m", "ruff", "check", "--fix"]
+        language: system
+        types: [python]
+
+      - id: ruff-format
+        name: ruff format
+        entry: .venv/Scripts/python.exe
+        args: ["-m", "ruff", "format"]
+        language: system
+        types: [python]
+
+      - id: mypy
+        name: mypy
+        entry: .venv/Scripts/python.exe
+        args: ["-m", "mypy", "app", "main.py"]
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: bandit
+        name: bandit
+        entry: .venv/Scripts/python.exe
+        args: ["-m", "bandit", "-q", "-r", "app", "main.py"]
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: no-print-statements
+        name: Disallow print()
+        entry: .venv/Scripts/python.exe
+        args:
+          - -c
+          - |
+            import pathlib
+            import sys
+
+            has_print = False
+            for file_name in sys.argv[1:]:
+                text = pathlib.Path(file_name).read_text(encoding="utf-8")
+                if "print(" in text:
+                    has_print = True
+                    print(file_name)
+            raise SystemExit(1 if has_print else 0)
+        language: system
+        types: [python]
+
+      - id: debug-statements
+        name: Remove debug statements
+        entry: .venv/Scripts/python.exe
+        args:
+          - -c
+          - |
+            import pathlib
+            import sys
+
+            patterns = ("pdb.set_trace", "breakpoint(")
+            has_debug = False
+            for file_name in sys.argv[1:]:
+                text = pathlib.Path(file_name).read_text(encoding="utf-8")
+                if any(pattern in text for pattern in patterns):
+                    has_debug = True
+                    print(file_name)
+            raise SystemExit(1 if has_debug else 0)
+        language: system
+        types: [python]

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 from importlib import import_module
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 from langchain_core.documents import Document
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.config.settings import settings
 from app.utils.logger import LoggerFactory
@@ -53,6 +54,9 @@ class TokenUsage(TypedDict):
     total_tokens: int | None
 
 
+QueryRoute = Literal["rag", "general"]
+
+
 class GroqLLMService:
     """Generate structured answers using a Groq-hosted chat model."""
 
@@ -76,6 +80,56 @@ class GroqLLMService:
             max_tokens=settings.llm_max_tokens,
             timeout=settings.llm_request_timeout,
         )
+
+    def classify_query_route(self, query: str) -> QueryRoute:
+        """Classify whether a query should use RAG or general generation.
+
+        Args:
+            query: User query text.
+
+        Returns:
+            ``"rag"`` when document retrieval is required, otherwise
+            ``"general"``.
+
+        Raises:
+            ValueError: If query is empty.
+        """
+        query_text = query.strip()
+        if not query_text:
+            raise ValueError("Query must not be empty")
+
+        messages = [
+            SystemMessage(
+                content="\n".join(
+                    [
+                        "You are a query routing classifier for a RAG system.",
+                        "Decide whether the user query needs document retrieval.",
+                        "Return only one label: rag or general.",
+                        "Use rag when the query depends on ingested documents,",
+                        "local project data, or asks for source-grounded answers.",
+                        "Use general for standalone questions answerable without",
+                        "the local document corpus.",
+                    ],
+                ),
+            ),
+            HumanMessage(content=query_text),
+        ]
+
+        logger.info("[LLMService] Classifying query route")
+        response = self._client.invoke(messages)
+        token_usage = self._extract_token_usage(response)
+        route = self._parse_query_route(self._extract_content(response))
+
+        logger.info(
+            "[LLMService][Classifier][Metrics] "
+            f"query={query_text!r}, "
+            f"route={route}, "
+            f"input_tokens={token_usage['input_tokens']}, "
+            f"output_tokens={token_usage['output_tokens']}, "
+            f"total_tokens={token_usage['total_tokens']}"
+        )
+
+        return route
 
     def generate(self, query: str, documents: list[Document]) -> RAGResponse:
         """Generate a structured answer and citation payload.
@@ -121,6 +175,68 @@ class GroqLLMService:
         }
 
         logger.info("[LLMService] Groq response validated")
+        return validated
+
+    def generate_general(self, query: str) -> RAGResponse:
+        """Generate a JSON answer for general non-RAG queries.
+
+        Args:
+            query: User query text.
+
+        Returns:
+            Strictly validated JSON-compatible response payload.
+
+        Raises:
+            ValueError: If model output is missing required fields.
+            json.JSONDecodeError: If model output is not valid JSON.
+        """
+        query_text = query.strip()
+        if not query_text:
+            raise ValueError("Query must not be empty")
+
+        messages = [
+            SystemMessage(
+                content="\n".join(
+                    [
+                        "You are a helpful general-purpose assistant.",
+                        "Answer the user query directly.",
+                        "Return valid JSON only without markdown fences.",
+                        "JSON schema:",
+                        '{"answer": "string", "sources": []}',
+                        "Rules:",
+                        "1. Keep sources as an empty list.",
+                        "2. Do not add keys other than answer and sources.",
+                    ],
+                ),
+            ),
+            HumanMessage(content=query_text),
+        ]
+
+        logger.info("[LLMService] Invoking Groq model for general query")
+        response = self._client.invoke(messages)
+        token_usage = self._extract_token_usage(response)
+        raw_output = self._extract_content(response)
+
+        logger.info(
+            "[LLMService][General][Metrics] "
+            f"query={query_text!r}, "
+            f"input_tokens={token_usage['input_tokens']}, "
+            f"output_tokens={token_usage['output_tokens']}, "
+            f"total_tokens={token_usage['total_tokens']}, "
+            "retrieved_docs=0"
+        )
+
+        payload = self._parse_response_json(raw_output)
+        validated = self._validate_response(payload)
+
+        validated["sources"] = []
+        validated["retrieval"] = {"document_count": 0}
+        validated["model"] = {
+            "provider": "groq",
+            "model_name": self._model_name,
+        }
+
+        logger.info("[LLMService] General response validated")
         return validated
 
     def _build_prompt(self, query: str, documents: list[Document]) -> str:
@@ -224,6 +340,55 @@ class GroqLLMService:
             "output_tokens": None,
             "total_tokens": None,
         }
+
+    @staticmethod
+    def _parse_query_route(raw_output: str) -> QueryRoute:
+        normalized = raw_output.strip().lower()
+
+        if not normalized:
+            logger.warning(
+                "[LLMService] Empty classifier output; defaulting route to 'rag'"
+            )
+            return "rag"
+
+        if normalized.startswith("```"):
+            normalized = normalized.removeprefix("```").strip()
+            if normalized.lower().startswith("json"):
+                normalized = normalized[4:].strip()
+            if normalized.endswith("```"):
+                normalized = normalized[:-3].strip()
+
+        if normalized.startswith("{"):
+            try:
+                payload = json.loads(normalized)
+                route_value = (
+                    payload.get("route") if isinstance(payload, dict) else None
+                )
+                if isinstance(route_value, str):
+                    route_candidate = route_value.strip().lower()
+                    if route_candidate == "rag":
+                        return "rag"
+                    if route_candidate == "general":
+                        return "general"
+            except json.JSONDecodeError:
+                pass
+
+        first_route_word = normalized.split()[0].strip("'\".,:;()[]{}")
+        if first_route_word == "rag":
+            return "rag"
+        if first_route_word == "general":
+            return "general"
+
+        if "general" in normalized and "rag" not in normalized:
+            return "general"
+
+        if "rag" in normalized:
+            return "rag"
+
+        logger.warning(
+            "[LLMService] Unrecognized classifier output; defaulting route to 'rag'"
+        )
+        return "rag"
 
     @staticmethod
     def _extract_content(response: Any) -> str:

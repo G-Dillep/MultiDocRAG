@@ -1,4 +1,4 @@
-"""LangGraph orchestration for retrieval and Groq-based generation."""
+"""LangGraph orchestration with LLM-based query routing."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any, TypedDict, cast
 from langchain_core.documents import Document
 from langgraph.graph import END, START, StateGraph
 
-from app.llm.groq_service import GroqLLMService, RAGResponse
+from app.llm.groq_service import GroqLLMService, QueryRoute, RAGResponse
 from app.retrieval.retriever import DocumentRetriever, VectorStoreLike
 from app.utils.logger import LoggerFactory
 
@@ -15,16 +15,17 @@ logger = LoggerFactory.get_logger()
 
 
 class PipelineState(TypedDict):
-    """State used by the retrieval-and-generation graph."""
+    """State used by the classification, retrieval, and generation graph."""
 
     query: str
     db: VectorStoreLike
+    route: QueryRoute
     documents: list[Document]
     response: RAGResponse
 
 
 class LangGraphRAGPipeline:
-    """Run retrieval followed by Groq generation via LangGraph."""
+    """Run query classification and route to RAG or general generation."""
 
     def __init__(
         self,
@@ -57,6 +58,7 @@ class LangGraphRAGPipeline:
         initial_state: PipelineState = {
             "query": query,
             "db": db,
+            "route": "rag",
             "documents": [],
             "response": {
                 "answer": "",
@@ -81,14 +83,35 @@ class LangGraphRAGPipeline:
     def _build_graph(self) -> Any:
         graph = StateGraph(PipelineState)
 
+        graph.add_node("classify", self._classify_node)
         graph.add_node("retrieve", self._retrieve_node)
-        graph.add_node("generate", self._generate_node)
+        graph.add_node("generate_rag", self._generate_rag_node)
+        graph.add_node("generate_general", self._generate_general_node)
 
-        graph.add_edge(START, "retrieve")
-        graph.add_edge("retrieve", "generate")
-        graph.add_edge("generate", END)
+        graph.add_edge(START, "classify")
+        graph.add_conditional_edges(
+            "classify",
+            self._route_after_classification,
+            {
+                "rag": "retrieve",
+                "general": "generate_general",
+            },
+        )
+        graph.add_edge("retrieve", "generate_rag")
+        graph.add_edge("generate_rag", END)
+        graph.add_edge("generate_general", END)
 
         return graph.compile()
+
+    def _classify_node(self, state: PipelineState) -> dict[str, Any]:
+        logger.info("[LangGraph] Classification node started")
+        route = self._llm_service.classify_query_route(state["query"])
+        logger.info(f"[LangGraph] Classification node completed with route={route}")
+        return {"route": route}
+
+    @staticmethod
+    def _route_after_classification(state: PipelineState) -> QueryRoute:
+        return state["route"]
 
     def _retrieve_node(self, state: PipelineState) -> dict[str, Any]:
         logger.info("[LangGraph] Retrieval node started")
@@ -98,8 +121,14 @@ class LangGraphRAGPipeline:
         )
         return {"documents": documents}
 
-    def _generate_node(self, state: PipelineState) -> dict[str, Any]:
-        logger.info("[LangGraph] Generation node started")
+    def _generate_rag_node(self, state: PipelineState) -> dict[str, Any]:
+        logger.info("[LangGraph] RAG generation node started")
         response = self._llm_service.generate(state["query"], state["documents"])
-        logger.info("[LangGraph] Generation node completed")
+        logger.info("[LangGraph] RAG generation node completed")
+        return {"response": response}
+
+    def _generate_general_node(self, state: PipelineState) -> dict[str, Any]:
+        logger.info("[LangGraph] General generation node started")
+        response = self._llm_service.generate_general(state["query"])
+        logger.info("[LangGraph] General generation node completed")
         return {"response": response}

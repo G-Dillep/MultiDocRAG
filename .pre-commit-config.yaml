@@ -1,4 +1,17 @@
 repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+
   - repo: local
     hooks:
       - id: ruff-check
@@ -13,6 +26,14 @@ repos:
         entry: .venv/Scripts/python.exe
         args: ["-m", "ruff", "format"]
         language: system
+        types: [python]
+
+      - id: flake8
+        name: flake8
+        entry: .venv/Scripts/python.exe
+        args: ["-m", "flake8", "app", "main.py"]
+        language: system
+        pass_filenames: false
         types: [python]
 
       - id: mypy

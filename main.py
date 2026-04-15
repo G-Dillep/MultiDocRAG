@@ -1,55 +1,48 @@
-"""Application entry point for the RAG pipeline."""
+"""Application entrypoint for the LangChain arithmetic agent."""
 
-import json
+from __future__ import annotations
 
-from app.config.settings import settings
-from app.embeddings.embedder import EmbeddingModelFactory
-from app.ingestion.loader_router import DocumentLoaderRouter
-from app.orchestration.langgraph_pipeline import LangGraphRAGPipeline
-from app.processing.chunker import DocumentChunker
-from app.processing.normalizer import DocumentNormalizer
-from app.utils.logger import LoggerFactory
-from app.vectorstore.chroma_store import create_vectorstore
+import argparse
 
-logger = LoggerFactory.get_logger()
+from loguru import logger
+
+from langchain_agents.agents import ArithmeticAgentService
+from langchain_agents.config import AppConfig
+from langchain_agents.utils import configure_logging
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Create command-line parser for runtime options."""
+    parser = argparse.ArgumentParser(description="Run arithmetic LangChain agent queries")
+    parser.add_argument(
+        "--query",
+        default="What is 5+3-4*2?",
+        help="Question to ask the arithmetic agent.",
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        help="Log level for Loguru output (DEBUG, INFO, WARNING, ERROR).",
+    )
+    return parser
 
 
 def main() -> None:
-    """Run the end-to-end RAG pipeline.
+    """Run the application with validated configuration and structured logging."""
+    args = build_parser().parse_args()
+    configure_logging(level=args.log_level)
 
-    The workflow includes ingestion, normalization, chunking, embedding,
-    vector store persistence, and retrieval.
-    """
-    try:
-        settings.validate_for_langgraph()
-        logger.info("[Main] Pipeline started")
+    config = AppConfig.from_environment()
+    config.apply_to_environment()
 
-        # Ingestion
-        router = DocumentLoaderRouter()
-        docs = router.load_documents(settings.data_path)
+    service = ArithmeticAgentService(config=config)
+    answer = service.ask(args.query)
 
-        # Normalization
-        normalizer = DocumentNormalizer()
-        docs = normalizer.normalize(docs)
-
-        # Chunking
-        chunker = DocumentChunker()
-        chunks = chunker.chunk(docs)
-        # Embeddings + DB
-
-        embedding_model = EmbeddingModelFactory().get_model()
-        db = create_vectorstore(chunks, embedding_model)
-
-        # LangGraph Retrieval + Generation
-        pipeline = LangGraphRAGPipeline()
-        response = pipeline.invoke(db=db, query=settings.default_query)
-
-        logger.info("[Main] Final response payload")
-        logger.info(json.dumps(response, ensure_ascii=True, indent=2))
-
-    except Exception:
-        logger.exception("[Main] Pipeline failed")
+    logger.info("Final response: {}", answer)
+    print(answer)
 
 
 if __name__ == "__main__":
     main()
+
+
